@@ -19,6 +19,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── build_hwpx.py          # 템플릿+XML → .hwpx 조립
 │   ├── fix_namespaces.py      # ★ 필수: 네임스페이스 후처리
 │   ├── validate.py            # HWPX 구조 검증
+│   ├── finalize_hwpx.py       # line cache removal, layout QA, Hancom open test
 │   ├── analyze_template.py    # HWPX 심층 분석
 │   ├── clone_form.py           # ★ 양식 복제 (Workflow F)
 │   ├── verify_hwpx.py         # ★ 서브에이전트 검수 도구
@@ -52,6 +53,40 @@ pip install python-hwpx lxml --break-system-packages
 # HWP→HWPX 변환 (Workflow H) 추가 의존성:
 pip install pyhwp5 olefile --break-system-packages
 ```
+
+## Mandatory Finalization And QA
+
+Run this finalization sequence for every generated or edited `.hwpx` before
+delivering it to a user:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/fix_namespaces.py" output.hwpx
+python3 "${CLAUDE_SKILL_DIR}/scripts/finalize_hwpx.py" output.hwpx --strip-linesegarray --layout
+python3 "${CLAUDE_SKILL_DIR}/scripts/validate.py" output.hwpx --layout
+```
+
+On Windows with Hancom Office installed, add a real open test:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/validate.py" output.hwpx --hancom
+```
+
+Rules:
+
+1. After any XML-level text replacement, remove `hp:linesegarray`. These are
+   Hancom line-layout caches; stale caches can make Hancom show a damaged-file
+   restore warning even when ZIP/XML validation passes.
+2. Treat `validate.py` as structural validation only unless `--layout` or
+   `--hancom` is used. XML validity does not prove that Hancom can open the
+   file or that long text fits the template.
+3. For template forms, preserve the template structure. If content is too long,
+   split the content into multiple paragraphs/list items and increase row
+   heights. Do not change the template just to fit existing prose.
+4. For subcategory body text, create real new paragraphs with the template body
+   style or visible list/indent markers. Do not put several long sentences into
+   one `<hp:t>` and rely on visual wrapping.
+5. For table rows with increased cell heights, update every cell in that row and
+   keep the table-level `hp:sz/@height` consistent with the row heights.
 
 ---
 
@@ -682,6 +717,9 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 13. **hwpx_helpers.py 사용 필수**: md2hwpx.py 직접 실행 금지. 반드시 `from hwpx_helpers import *`로 함수를 사용하여 빌드 스크립트를 작성할 것. md2hwpx.py는 government 템플릿(컬러 배너/섹션 바)을 지원하지 않음
 14. **양식 복제 시 Workflow F 필수**: 사용자가 `.hwpx` 양식을 제공하고 내용 변경을 요청하면 `clone_form.py` 사용. 절대로 `<hp:t>` 노드를 순차 덮어쓰기하거나 lxml로 텍스트를 직접 조작하지 말 것 (런 소실·서식 파괴 원인)
 15. **서브에이전트 검수 권장**: 문서 생성 후 별도 서브에이전트로 `validate.py` + `text_extract.py` + 구조 비교를 실행하여 품질 검증
+16. **Remove line caches after edits**: run `finalize_hwpx.py --strip-linesegarray` after XML/text replacement.
+17. **Check strict table layout**: run `finalize_hwpx.py --layout` and fix long single-paragraph cells by splitting paragraphs and increasing row heights.
+18. **Real openability check**: on Windows with Hancom installed, run `validate.py --hancom`; ZIP/XML validation alone is not enough.
 
 ---
 

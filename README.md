@@ -55,6 +55,22 @@ python3 scripts/clone_form.py sample.hwpx output.hwpx --map replacements.json
 python3 scripts/fix_namespaces.py output.hwpx
 ```
 
+### Final validation and layout QA
+
+```bash
+python3 scripts/fix_namespaces.py output.hwpx
+python3 scripts/finalize_hwpx.py output.hwpx --strip-linesegarray --layout
+python3 scripts/validate.py output.hwpx --layout
+
+# Windows + Hancom Office only
+python3 scripts/validate.py output.hwpx --hancom
+```
+
+`finalize_hwpx.py` removes stale `hp:linesegarray` layout caches after XML
+text replacement and reports likely layout risks, including long single
+paragraphs in table cells, short row heights for dense cells, and body text
+that lost visible indentation after headings.
+
 ### 텍스트 추출
 
 ```bash
@@ -77,6 +93,7 @@ hwpx-skill/
 │   ├── analyze_template.py     # HWPX 심층 분석
 │   ├── verify_hwpx.py          # 품질 검증
 │   ├── validate.py             # 구조 검증
+│   ├── finalize_hwpx.py        # line cache removal, layout QA, Hancom open test
 │   ├── text_extract.py         # 텍스트 추출
 │   ├── create_document.py      # 문서 생성
 │   └── office/                 # unpack/pack 유틸리티
@@ -113,6 +130,9 @@ hwpx-skill/
 3. 양식 복제 시 `clone_form.py` 사용 (XML 직접 조작 금지)
 4. 템플릿 간 스타일 ID 호환 불가 — 해당 템플릿 ID만 사용
 5. `mimetype`은 첫 ZIP 엔트리, `ZIP_STORED`
+6. After XML text replacement, remove `hp:linesegarray` before delivery
+7. For strict templates, split long table-cell prose and increase row height
+8. Use `validate.py --hancom` on Windows when Hancom openability matters
 
 ## 관련 프로젝트
 
