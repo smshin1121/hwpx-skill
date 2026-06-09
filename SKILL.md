@@ -23,6 +23,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── clone_form.py           # ★ 양식 복제 (Workflow F)
 │   ├── verify_hwpx.py         # ★ 서브에이전트 검수 도구
 │   ├── text_extract.py        # 텍스트 추출
+│   ├── build_problem_answer_sheet.py  # 문제지 1장 + 답안지 1장 생성
 │   ├── md2hwpx.py             # 마크다운→HWPX 자동 변환
 │   └── office/{unpack,pack}.py
 ├── templates/
@@ -34,7 +35,8 @@ ${CLAUDE_SKILL_DIR}/
 │   └── government/            # ★ 관공서 (컬러 섹션 바/표지 배너)
 ├── assets/
 │   ├── report-template.hwpx
-│   └── government-reference.hwpx
+│   ├── government-reference.hwpx
+│   └── problem-answer-reference.hwpx
 └── references/
     ├── xml-structure.md       # XML 구조, 이미지 삽입, 표지/섹션 바 패턴
     ├── template-styles.md     # 템플릿별 스타일 ID 맵
@@ -68,6 +70,7 @@ pip install pyhwp5 olefile --break-system-packages
  ├─ "이 HWPX 양식으로 만들어줘" → 워크플로우 D (레퍼런스 기반)
  ├─ "이 양식 복제해서 내용 바꿔줘" → 워크플로우 F (양식 복제) ★
  ├─ "공문 작성해줘/공문서 검수해줘" → 워크플로우 G (공문서 작성법 준수) ★
+ ├─ "문제지 한장 답안지 한장", "문제지+답안지", "정답지 포함 활동지" → 워크플로우 I ★
  └─ "HWPX 읽어줘" → 워크플로우 E (읽기/추출)
 ```
 
@@ -105,6 +108,48 @@ pip install pyhwp5 olefile --break-system-packages
 > **반드시 할 것:**
 > - `clone_form.py`의 `clone()` 함수 또는 ZIP-level 문자열 치환 사용
 > - 치환은 `str.replace()` 기반으로 XML 구조를 건드리지 않음
+
+---
+
+## 워크플로우 I: 문제지 1장 + 답안지 1장 생성
+
+> 학생용 문제지와 교사용 답안지를 한 파일 안에 2쪽 구조로 만든다. 1쪽은 `문제지`, 2쪽은 `답안지`이며, 전체를 표 기반으로 구성한다.
+
+### 입력 JSON
+
+```json
+{
+  "title": "수업 제목",
+  "unit": "영상 수업",
+  "subtitle": "핵심 내용과 실천 목표",
+  "subject": "국어",
+  "main_actor": "학생",
+  "scenes": [
+    {"title": "도입", "summary": "핵심 내용을 한 문장으로 정리한다."},
+    {"title": "전개", "summary": "중요 장면과 근거를 정리한다."},
+    {"title": "정리", "summary": "배운 점과 실천 목표를 쓴다."}
+  ],
+  "change": "변화나 배운 점 예시 답안",
+  "theme": "핵심 주제 예시 답안"
+}
+```
+
+### 생성 명령
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/build_problem_answer_sheet.py" \
+  --input-json lesson.json \
+  --output lesson-sheet.hwpx
+python3 "${CLAUDE_SKILL_DIR}/scripts/validate.py" lesson-sheet.hwpx
+```
+
+### 품질 기준
+
+- `assets/problem-answer-reference.hwpx`에서 header/secPr/style을 가져온다.
+- 문제지와 답안지 사이에는 `pageBreak="1"`이 정확히 1개 있어야 한다.
+- 구조 검증은 `validate.py`로 통과해야 한다.
+- 최종 HWPX의 `Contents/section0.xml`에는 `문제지`, `답안지`, `첫 번째 활동`, `두 번째 활동`, `세 번째 활동`, `정답`, `예시 답안` 텍스트가 있어야 한다.
+- JSON 입력에 `\\n`이 들어와도 실제 줄바꿈으로 정규화한다.
 
 ---
 

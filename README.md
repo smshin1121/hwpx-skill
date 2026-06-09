@@ -14,6 +14,7 @@ HWP/HWPX 문서 생성, 변환, 읽기, 편집을 위한 Claude 스킬.
 | **F** | 양식 복제 (테이블/이미지/스타일 100% 보존) |
 | **G** | 2025 개정 공문서 작성법 준수 |
 | **H** | **HWP(바이너리) → HWPX 변환** |
+| **I** | 문제지 1장 + 답안지 1장 HWPX 생성 |
 
 ## 설치
 
@@ -62,6 +63,17 @@ python3 scripts/text_extract.py doc.hwpx
 python3 scripts/text_extract.py doc.hwpx --format markdown
 ```
 
+### 문제지 + 답안지 생성
+
+```bash
+python3 scripts/build_problem_answer_sheet.py \
+  --input-json lesson.json \
+  --output lesson-sheet.hwpx
+python3 scripts/validate.py lesson-sheet.hwpx
+```
+
+`lesson.json`에는 제목, 단원, 장면/문항 요약, 예시 답안을 넣는다. 결과물은 1쪽 `문제지`, 2쪽 `답안지` 구조로 만들어진다.
+
 ## 프로젝트 구조
 
 ```
@@ -79,6 +91,7 @@ hwpx-skill/
 │   ├── validate.py             # 구조 검증
 │   ├── text_extract.py         # 텍스트 추출
 │   ├── create_document.py      # 문서 생성
+│   ├── build_problem_answer_sheet.py # 문제지+답안지 2쪽 생성
 │   └── office/                 # unpack/pack 유틸리티
 ├── templates/                  # 문서 템플릿
 │   ├── base/                   # 베이스 skeleton
