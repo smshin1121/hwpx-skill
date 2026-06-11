@@ -1,6 +1,12 @@
 # hwpx-skill
 
+[![GitHub stars](https://img.shields.io/github/stars/jkf87/hwpx-skill?style=social)](https://github.com/jkf87/hwpx-skill/stargazers)
+[![GitHub release](https://img.shields.io/github/v/release/jkf87/hwpx-skill)](https://github.com/jkf87/hwpx-skill/releases)
+[![License](https://img.shields.io/github/license/jkf87/hwpx-skill)](LICENSE)
+
 HWP/HWPX 문서 생성, 변환, 읽기, 편집을 위한 Claude 스킬.
+
+> ⭐ **이 스킬이 도움이 되셨다면 [GitHub에서 Star](https://github.com/jkf87/hwpx-skill)를 눌러주세요!** 한글 문서 자동화가 필요한 다른 분들에게도 닿을 수 있게 도와주세요.
 
 ## 기능
 
