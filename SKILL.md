@@ -487,18 +487,32 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" fill form.hwpx out.hwpx --cel
 
 ### ★ 배포 전 필수: `check` — 한컴 열림 가능성 점검
 
-> **validate.py(XML 유효성)·verify(값 존재)를 통과해도 한컴이 '손상 문서'로
-> 거부하는 일이 있다.** 가장 흔한 원인은 secPr 불완전(용지/여백 자식 누락).
-> `check`는 이를 정적으로 잡는다 — 값 없이도 실행 가능, 모든 산출물에 적용.
+> **validate.py(XML 유효성)·verify(값 존재)를 통과해도 한컴이 문서를 못 여는 일이 있다.**
+> `check`는 두 종류의 사고를 정적으로 잡는다 — 값 없이 실행 가능, 모든 산출물에 적용.
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" check output.hwpx   # exit 0=정상, 2=secPr 문제
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" check output.hwpx            # secPr 문제만 실패(exit 2)
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" check output.hwpx --strict   # raw 파일도 실패(exit 2) — 배포 게이트
 ```
 
-errors에 `pagePr 없음`/`비표준 속성`이 뜨면 그 파일은 **LLM이 손수 만든 가짜
-secPr**을 가진 것이다. 정상 HWPX(워크플로우 H 변환본·한컴 저장본)의
-`<hp:secPr>...</hp:secPr>`을 통째로 이식하거나, 애초에 정상 파일을 베이스로
-fill/replace만 적용한다. fill의 `verify`에도 이 점검이 자동 포함된다.
+| 사고 | 신호 | 결과 |
+|------|------|------|
+| **손상된 문서 대화상자** | secPr에 pagePr/margin 누락, pageWidth 등 비표준 속성 | `errors` (기본 exit 2) |
+| **빈 페이지로 열림** | 미리보기(PrvText)·줄배치(linesegarray) 부재 = 한컴 미경유 raw 파일 | `raw_llm_suspect: true` (warning, `--strict`면 exit 2) |
+
+- **errors**: LLM이 손수 만든 가짜 secPr. 정상 HWPX의 `<hp:secPr>...</hp:secPr>`을 이식.
+- **raw_llm_suspect**: section XML을 손수 만들어 ZIP으로 묶기만 한 파일. 한컴이 본문
+  레이아웃을 못 그려 빈 페이지가 된다. **정상 HWPX(한컴 저장본/워크플로우 H 변환본)를
+  베이스로 fill/replace만 적용**하거나, 한컴에서 한 번 열어 저장해야 한다.
+
+fill의 `verify`에도 이 점검이 자동 포함된다.
+
+### 안전망: 배포 차단 훅 (선택)
+
+`scripts/hwpx_guard_hook.py`를 Claude Code의 PreToolUse 훅(matcher: Bash)으로
+등록하면, .hwpx를 한컴으로 열거나(`open`) Downloads/Desktop으로 복사(`cp`/`mv`)
+하기 직전에 `check --strict`가 자동 실행되어 깨진/raw 파일을 차단하고 사유를
+알려준다. 등록 방법은 스크립트 상단 주석 참조.
 
 ### 워크플로우 J vs F vs B 선택 기준
 

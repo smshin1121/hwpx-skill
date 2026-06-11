@@ -43,6 +43,26 @@ def run(*args, expect=0):
     return r.returncode, out
 
 
+def _make_raw(src, dst):
+    """linesegarray를 모두 제거해 '한컴 미경유 raw' 상태 재현."""
+    import io
+    buf = src.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(buf)) as zf:
+        names = [n for n in zf.namelist() if re.search(r"section\d+\.xml$", n)]
+        with zipfile.ZipFile(dst, "w") as zo:
+            for item in zf.infolist():
+                data = zf.read(item.filename)
+                if item.filename in names:
+                    txt = data.decode("utf-8")
+                    txt = re.sub(r"<hp:linesegarray>.*?</hp:linesegarray>", "",
+                                 txt, flags=re.DOTALL)
+                    txt = re.sub(r"<hp:linesegarray\b[^>]*/>", "", txt)
+                    data = txt.encode("utf-8")
+                ct = (zipfile.ZIP_STORED if item.filename == "mimetype"
+                      else zipfile.ZIP_DEFLATED)
+                zo.writestr(item, data, compress_type=ct)
+
+
 def _break_secpr(src, dst):
     """정상 HWPX의 secPr 자식 요소를 제거해 '한컴 손상 문서' 상태 재현."""
     import io
@@ -164,10 +184,21 @@ def main():
         check("verify가 openable 점검 포함",
               rep and rep.get("openable", {}).get("ok") is True)
 
-        # ─ check: 정상 파일(base 골격은 완전한 secPr 보유) 통과 ─
+        # ─ check: secPr 완전(base 골격) + linesegarray 보유 → 통과 ─
         code, rep = run("check", form)
-        check("check 정상 파일 통과", code == 0 and rep["ok"],
+        check("check secPr 통과 (errors 없음)", not rep["errors"],
               f"(errors: {rep and rep.get('errors')})")
+        check("check linesegarray 보유 폼 raw 아님",
+              rep and rep["raw_llm_suspect"] is False)
+
+        # ─ check: linesegarray 제거한 raw 변형 → raw 탐지 + strict 차단 ─
+        raw_form = d / "raw.hwpx"
+        _make_raw(form, raw_form)
+        code, rep = run("check", raw_form)
+        check("check raw 탐지 (기본은 warning, exit 0)",
+              code == 0 and rep["raw_llm_suspect"] is True)
+        code, rep = run("check", raw_form, "--strict", expect=2)
+        check("check --strict raw 차단 (exit 2)", code == 2 and not rep["ok"])
 
         # ─ check: secPr 망가뜨린 파일 탐지 (한컴 '손상 문서' 사고 재현) ─
         broken = d / "broken.hwpx"
