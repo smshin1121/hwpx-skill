@@ -485,34 +485,39 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" fill form.hwpx out.hwpx --cel
 # --values와 --cells는 동시 사용 가능 (라벨 매칭 후 좌표 채움 순서)
 ```
 
-### ★ 배포 전 필수: `check` — 한컴 열림 가능성 점검
+### ★★★ 필수 게이트: 사용자에게 파일을 주기 전 반드시 통과시킬 것
 
-> **validate.py(XML 유효성)·verify(값 존재)를 통과해도 한컴이 문서를 못 여는 일이 있다.**
-> `check`는 두 종류의 사고를 정적으로 잡는다 — 값 없이 실행 가능, 모든 산출물에 적용.
+> **모든 .hwpx 산출물은 사용자에게 전달(open·복사·첨부·"완성했습니다" 보고)하기
+> 직전에 아래를 반드시 실행한다. 어떤 워크플로우(생성/변환/편집)로 만들었든 예외 없다.**
+> validate.py(XML 유효성)·verify(값 존재)를 통과해도 한컴이 문서를 못 여는 일이 있다.
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" check output.hwpx            # secPr 문제만 실패(exit 2)
-python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" check output.hwpx --strict   # raw 파일도 실패(exit 2) — 배포 게이트
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" check output.hwpx --strict
 ```
 
-| 사고 | 신호 | 결과 |
-|------|------|------|
-| **손상된 문서 대화상자** | secPr에 pagePr/margin 누락, pageWidth 등 비표준 속성 | `errors` (기본 exit 2) |
-| **빈 페이지로 열림** | 미리보기(PrvText)·줄배치(linesegarray) 부재 = 한컴 미경유 raw 파일 | `raw_llm_suspect: true` (warning, `--strict`면 exit 2) |
+- **exit 0**: 통과 → 전달 가능
+- **exit 2**: 아래 표대로 수정한 뒤 **다시 check가 통과할 때까지** 전달 금지
 
-- **errors**: LLM이 손수 만든 가짜 secPr. 정상 HWPX의 `<hp:secPr>...</hp:secPr>`을 이식.
-- **raw_llm_suspect**: section XML을 손수 만들어 ZIP으로 묶기만 한 파일. 한컴이 본문
-  레이아웃을 못 그려 빈 페이지가 된다. **정상 HWPX(한컴 저장본/워크플로우 H 변환본)를
-  베이스로 fill/replace만 적용**하거나, 한컴에서 한 번 열어 저장해야 한다.
+| 사고 | check 신호 | 수정 방법 |
+|------|-----------|-----------|
+| **손상된 문서 대화상자** | `errors`: secPr에 pagePr/margin 누락·pageWidth 등 비표준 속성 | 정상 HWPX의 `<hp:secPr>...</hp:secPr>`을 이식. 애초에 정상 파일을 베이스로 작업 |
+| **빈 페이지로 열림** | `raw_llm_suspect: true`: 미리보기·줄배치 부재(한컴 미경유) | 정상 HWPX(한컴 저장본/워크플로우 H 변환본)를 베이스로 fill/replace. 또는 한컴에서 한 번 열어 저장 |
+| **모든 글자에 네모 테두리** | `char_border_bug: true`: charPr 다수가 SOLID 테두리 borderFill 참조 | `fill_hwpx.py fix-borders output.hwpx` 실행 후 재check |
 
-fill의 `verify`에도 이 점검이 자동 포함된다.
+> ⚠️ **이 게이트를 건너뛰면 안 된다.** 과거 사고가 전부 여기서 잡혔어야 했다:
+> 가짜 secPr(손상 문서), raw 파일(빈 페이지), 글자 테두리 — 셋 다 `check --strict`가
+> 잡는다. fill의 `verify`에도 이 점검이 자동 포함된다.
+>
+> **특히 글자 테두리는 변환(convert)을 안 거치는 경로(기존 hwpx 편집)에서도 생기므로,
+> "변환했으니 괜찮다"고 넘기지 말고 반드시 최종 산출물에 check를 돌릴 것.**
 
-### 안전망: 배포 차단 훅 (선택)
+### 안전망: 배포 차단 훅 (Claude Code 환경 자동화)
 
-`scripts/hwpx_guard_hook.py`를 Claude Code의 PreToolUse 훅(matcher: Bash)으로
-등록하면, .hwpx를 한컴으로 열거나(`open`) Downloads/Desktop으로 복사(`cp`/`mv`)
-하기 직전에 `check --strict`가 자동 실행되어 깨진/raw 파일을 차단하고 사유를
-알려준다. 등록 방법은 스크립트 상단 주석 참조.
+`scripts/hwpx_guard_hook.py`를 PreToolUse 훅(matcher: Bash)으로 등록하면, .hwpx를
+`open`/`cp`/`mv`로 전달하기 직전 자동으로 **글자 테두리는 제거**하고 **secPr·raw
+문제는 차단**한다. 이는 위 필수 게이트의 **백업 안전망**이지 대체가 아니다 — 훅이
+없는 환경(다른 에이전트 등)에서는 위 게이트를 LLM이 직접 지켜야 한다. 등록 방법은
+스크립트 상단 주석 참조.
 
 ### 워크플로우 J vs F vs B 선택 기준
 
@@ -650,11 +655,12 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" \
 [검수 서브에이전트 생성]
   3. verify_hwpx.py --source --result 실행
   4. text_extract.py로 텍스트 추출 확인
-  5. PASS/FAIL 리포트 반환
+  5. fill_hwpx.py check --strict 실행 (★ 필수 게이트)
+  6. PASS/FAIL 리포트 반환
   ↓
 [메인 에이전트]
-  6. FAIL이면 수정 후 재검수
-  7. PASS이면 사용자에게 전달
+  7. FAIL이면 수정 후 재검수 (check exit 2 → 해당 수정 후 재check)
+  8. check --strict exit 0일 때만 사용자에게 전달
 ```
 
 ---
@@ -897,6 +903,7 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 
 ## Critical Rules
 
+0. **★★★ 배포 전 필수 게이트 (최우선)**: .hwpx를 사용자에게 전달(open·복사·"완성" 보고)하기 직전 **반드시** `fill_hwpx.py check output.hwpx --strict`를 실행하고 **exit 0일 때만 전달**한다. exit 2면 secPr 이식 / 정상 베이스로 재작업 / `fix-borders` 중 해당 수정 후 재check. 변환·생성·편집 어느 경로든 예외 없음. (과거 사고 3종 — 손상 문서·빈 페이지·글자 테두리 — 전부 이 한 줄로 잡힌다)
 1. **HWP+HWPX 지원**: `.hwp`(바이너리)는 워크플로우 H로 HWPX 변환 후 처리
 2. **secPr 필수**: 첫 문단 첫 run에 secPr + colPr
 3. **mimetype**: 첫 ZIP 엔트리, ZIP_STORED
