@@ -9,6 +9,28 @@
 | charPrIDRef가 header.xml에 없는 ID 참조 | 템플릿에 정의된 ID만 사용 |
 | mimetype이 첫 ZIP 엔트리 아님 | build_hwpx.py 사용 시 자동 처리 |
 
+## ★ "한컴이 '손상된 문서' 복구 대화상자를 띄움" (secPr 불완전)
+
+> **validate.py(XML 유효성)와 fill verify(값 존재)를 통과해도 한컴이 안 열리는 가장 흔한 원인.**
+> LLM이 section0.xml을 손수 작성하면 secPr을 `<hp:secPr pageWidth=".." leftMargin="..">`처럼
+> **가짜 속성**으로 만들기 쉽다. 실제 HWPX 스키마는 secPr의 **자식 요소**
+> `<hp:pagePr>`(용지 크기)+`<hp:margin>`(여백)을 요구한다. 이게 없으면 한컴은
+> 문서를 그릴 수 없어 손상 판정한다.
+
+| 증상 | 진단 | 해결 |
+|------|------|------|
+| validate 통과·한컴 손상 경고 | `fill_hwpx.py check 파일.hwpx` 실행 → secPr errors 확인 | 정상 HWPX의 secPr을 이식 |
+| secPr에 pageWidth/leftMargin 등 속성 | LLM이 손수 작성한 가짜 secPr | 동일 용지의 정상 파일에서 `<hp:secPr>...</hp:secPr>` 통째 복사 |
+| secPr에 pagePr/margin 자식 없음 | 필수 자식 누락 | templates/base 또는 정상 파일의 secPr 사용 |
+
+```bash
+# 배포 전 항상 열림 가능성 점검 (값 없이도 실행 가능)
+python3 scripts/fill_hwpx.py check output.hwpx     # exit 0=정상, 2=secPr 문제
+```
+
+> **교훈: LLM이 section0.xml을 처음부터 쓰지 말 것.** 정상 HWPX(워크플로우 H 변환본
+> 또는 한컴 저장본)를 베이스로 fill/replace만 적용하면 secPr이 자동 보존된다.
+
 ## "내용은 있지만 서식이 깨짐"
 
 | 원인 | 해결 |
