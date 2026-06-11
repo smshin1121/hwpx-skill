@@ -778,10 +778,16 @@ body_lines = [
 
 ```
 [1] .hwp 파일 확인
-[2] convert_hwp.py로 변환 → .hwpx 생성
+[2] convert_hwp.py로 변환 → .hwpx 생성 (글자 테두리 버그 자동 보정)
 [3] validate.py 검증
-[4] (선택) 후속 워크플로우 진행 (E/C/F)
+[4] (선택) 후속 워크플로우 진행 (E/C/F/J)
 ```
+
+> ⚠️ **변환기 버그 자동 보정**: hwp2hwpx 변환기는 글자모양(charPr)마다 테두리
+> borderFill을 참조시켜 **문서의 모든 글자에 네모 테두리**가 생기는 버그가 있다.
+> `convert_hwp.py`는 변환 직후 이를 자동 제거한다(표 셀 테두리는 보존).
+> 이미 변환된 파일은 `fill_hwpx.py fix-borders 파일.hwpx`로 보정한다.
+> 변환 결과를 그대로 두려면 `--keep-char-borders`.
 
 ### CLI 사용법
 

@@ -1310,6 +1310,45 @@ def add_rows_hwpx(src, dst, table_idx, rows_values, section_idx=0,
     return name
 
 
+# ─── 글자 테두리 제거 (hwp2hwpx 변환 버그 보정) ────────────────────
+
+_CHARPR_OPEN_RE = re.compile(r"<(?:\w+:)?charPr\b[^>]*?>")
+_BORDERREF_RE = re.compile(r'\s*borderFillIDRef="\d+"')
+
+
+def strip_char_borders(path, dst=None):
+    """글자모양(charPr)에 박힌 글자 테두리 참조(borderFillIDRef)를 제거.
+
+    hwp2hwpx 변환기가 모든 charPr에 테두리 borderFill을 참조시켜 문서의 모든
+    글자에 네모 테두리가 생기는 버그를 보정한다. 표 셀(tc)의 borderFillIDRef는
+    section에 있어 건드리지 않으므로 표 테두리는 그대로 보존된다.
+
+    Returns: 제거한 참조 수 (0이면 변경 없음).
+    """
+    with open(path, "rb") as f:
+        buf = f.read()
+    repl, total = {}, 0
+    with zipfile.ZipFile(io.BytesIO(buf)) as zf:
+        for name in zf.namelist():
+            if not name.endswith("header.xml"):
+                continue
+            h = zf.read(name).decode("utf-8")
+            h2 = _CHARPR_OPEN_RE.sub(
+                lambda m: _BORDERREF_RE.sub("", m.group(0)), h)
+            removed = h.count("borderFillIDRef") - h2.count("borderFillIDRef")
+            if removed:
+                repl[name] = h2.encode("utf-8")
+                total += removed
+    if repl:
+        out = patch_zip_entries(buf, repl)
+        with open(dst or path, "wb") as f:
+            f.write(out)
+    elif dst and dst != path:
+        with open(dst, "wb") as f:
+            f.write(buf)
+    return total
+
+
 # ─── 한컴 열림 가능성 사전 점검 (secPr 완전성) ─────────────────────
 
 # secPr 첫 섹션이 반드시 가져야 하는 자식 요소 (없으면 한컴이 '손상 문서'로 판정)
@@ -1564,6 +1603,12 @@ def main():
     p_chk.add_argument("--strict", action="store_true",
                        help="raw LLM 파일(빈 페이지 위험)도 실패(exit 2)로 처리")
 
+    p_fb = sub.add_parser("fix-borders",
+                          help="글자 테두리 제거 (hwp2hwpx 변환 버그 보정)")
+    p_fb.add_argument("input")
+    p_fb.add_argument("output", nargs="?",
+                      help="출력 경로 (생략 시 입력 파일 덮어쓰기)")
+
     args = parser.parse_args()
 
     def load_values(spec):
@@ -1661,6 +1706,14 @@ def main():
             report["file"] = args.input
             _print(report)
             return 0 if report["ok"] else 2
+
+        if args.command == "fix-borders":
+            removed = strip_char_borders(args.input, args.output)
+            _print({"input": args.input,
+                    "output": args.output or args.input,
+                    "char_borders_removed": removed,
+                    "ok": True})
+            return 0
     except Exception as e:  # noqa: BLE001
         print(f"오류: {e}", file=sys.stderr)
         return 1

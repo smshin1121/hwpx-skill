@@ -81,6 +81,24 @@ python3 scripts/fill_hwpx.py check output.hwpx --strict
 | `</hp:pic>` 뒤 `<hp:t/>` 누락 | run 안에 빈 텍스트 노드 추가 |
 | content.hpf에 이미지 미등록 | `<opf:item>` 추가 (isEmbeded="1") |
 
+## ★ "변환 후 모든 글자에 네모 테두리가 생김" (hwp2hwpx 버그)
+
+> HWP→HWPX 변환 시 변환기가 글자모양(charPr)마다 테두리 borderFill을
+> 참조시켜 **문서의 모든 글자에 검은 네모 테두리**가 생긴다. 표 셀 테두리가
+> 아니라 글자 하나하나에 박스가 쳐진 모양이면 이 버그다.
+
+| 원인 | 해결 |
+|------|------|
+| charPr의 borderFillIDRef가 테두리(SOLID) borderFill을 참조 | `convert_hwp.py`는 변환 직후 자동 제거(기본 동작) |
+| 이미 변환된 .hwpx에 테두리가 남음 | `python3 scripts/fill_hwpx.py fix-borders 파일.hwpx` |
+| 표 셀 테두리까지 사라질까 걱정 | tc(표 셀)의 borderFillIDRef는 section에 있어 보존됨 |
+
+```bash
+# 이미 변환된 파일 보정 (표 테두리는 유지, 글자 테두리만 제거)
+python3 scripts/fill_hwpx.py fix-borders 변환본.hwpx              # 덮어쓰기
+python3 scripts/fill_hwpx.py fix-borders 변환본.hwpx out.hwpx     # 새 파일로
+```
+
 ## "python-hwpx 에러"
 
 | 원인 | 해결 |

@@ -83,12 +83,30 @@ def _ensure_hwp2hwpx():
     import hwp2hwpx  # noqa: F401
 
 
-def convert(input_path, output_path=None):
+def _fix_char_borders(hwpx_path):
+    """변환기가 charPr마다 박은 글자 테두리를 제거 (표 셀 테두리는 보존).
+
+    hwp2hwpx는 글자모양(charPr)에 테두리 borderFill을 참조시켜 문서의 모든
+    글자에 네모 테두리가 생기는 버그가 있다. fill_hwpx.strip_char_borders로
+    보정한다. fill_hwpx가 없거나 실패해도 변환 자체는 성공으로 둔다.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from fill_hwpx import strip_char_borders
+        removed = strip_char_borders(hwpx_path)
+        if removed:
+            print(f"[convert_hwp] 글자 테두리 제거(변환 버그 보정): {removed}개")
+    except Exception as e:  # noqa: BLE001
+        print(f"[convert_hwp] 글자 테두리 후처리 건너뜀: {e}", file=sys.stderr)
+
+
+def convert(input_path, output_path=None, fix_char_borders=True):
     """HWP 파일을 HWPX로 변환.
 
     Args:
         input_path: 입력 .hwp 파일 경로
         output_path: 출력 .hwpx 파일 경로 (기본: 같은 이름 .hwpx)
+        fix_char_borders: 변환 후 글자 테두리 버그 자동 보정 (기본 True)
 
     Returns:
         출력 파일 경로
@@ -96,7 +114,10 @@ def convert(input_path, output_path=None):
     _ensure_dependencies()
     _ensure_hwp2hwpx()
     from hwp2hwpx import convert_file
-    return convert_file(input_path, output_path)
+    out = convert_file(input_path, output_path)
+    if fix_char_borders:
+        _fix_char_borders(out)
+    return out
 
 
 def info(input_path):
@@ -137,6 +158,8 @@ def main():
     parser.add_argument("-o", "--output", help="출력 .hwpx 파일 경로 (기본: 같은 이름)")
     parser.add_argument("--info", action="store_true", help="문서 정보만 출력 (변환 안 함)")
     parser.add_argument("--json", action="store_true", help="JSON 형태로 출력")
+    parser.add_argument("--keep-char-borders", action="store_true",
+                        help="글자 테두리 자동 제거를 끔 (변환 결과 그대로 유지)")
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -155,7 +178,8 @@ def main():
                 for k, v in result.items():
                     print(f"  {k}: {v}")
         else:
-            output = convert(args.input, args.output)
+            output = convert(args.input, args.output,
+                             fix_char_borders=not args.keep_char_borders)
             if args.json:
                 print(json.dumps({"input": args.input, "output": output,
                                    "size": os.path.getsize(output)},
