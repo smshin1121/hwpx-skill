@@ -97,7 +97,15 @@ python3 scripts/fill_hwpx.py check output.hwpx --strict
 # 이미 변환된 파일 보정 (표 테두리는 유지, 글자 테두리만 제거)
 python3 scripts/fill_hwpx.py fix-borders 변환본.hwpx              # 덮어쓰기
 python3 scripts/fill_hwpx.py fix-borders 변환본.hwpx out.hwpx     # 새 파일로
+
+# 배포 전 점검 — 글자 테두리도 함께 검사 (strict면 차단)
+python3 scripts/fill_hwpx.py check 파일.hwpx --strict
 ```
+
+> **convert_hwp.py를 거치지 않은 경로 주의**: 이미 변환된 hwpx(또는 한컴 저장본)를
+> 베이스로 replace/clone만 하면 변환 시점의 자동 보정이 안 걸려 글자 테두리가
+> 남는다. `hwpx_guard_hook.py`를 PreToolUse 훅으로 걸면 파일을 사용자에게 전달
+> (open/cp)하기 직전 **글자 테두리를 자동 제거**하므로 어떤 경로든 안전하다.
 
 ## "python-hwpx 에러"
 
