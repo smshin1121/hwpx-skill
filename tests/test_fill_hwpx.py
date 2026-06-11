@@ -43,6 +43,26 @@ def run(*args, expect=0):
     return r.returncode, out
 
 
+def _break_secpr(src, dst):
+    """정상 HWPX의 secPr 자식 요소를 제거해 '한컴 손상 문서' 상태 재현."""
+    import io
+    buf = src.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(buf)) as zf:
+        names = [n for n in zf.namelist() if re.search(r"section\d+\.xml$", n)]
+        xml = zf.read(names[0]).decode("utf-8")
+    # secPr 내부를 빈 grid만 남기고 비워 pagePr/margin 제거
+    broken = re.sub(r"(<hp:secPr\b[^>]*>).*?(</hp:secPr>)",
+                    r"\1<hp:grid/>\2", xml, count=1, flags=re.DOTALL)
+    with zipfile.ZipFile(dst, "w") as zo:
+        with zipfile.ZipFile(io.BytesIO(buf)) as zf:
+            for item in zf.infolist():
+                data = (broken.encode("utf-8")
+                        if item.filename == names[0] else zf.read(item.filename))
+                ct = (zipfile.ZIP_STORED if item.filename == "mimetype"
+                      else zipfile.ZIP_DEFLATED)
+                zo.writestr(item, data, compress_type=ct)
+
+
 def main():
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -141,6 +161,21 @@ def main():
         check("verify 전체 통과", code == 0 and rep["ok"])
         check("섹션 외 엔트리 바이트 보존",
               rep and rep["changed_entries"] == ["Contents/section0.xml"])
+        check("verify가 openable 점검 포함",
+              rep and rep.get("openable", {}).get("ok") is True)
+
+        # ─ check: 정상 파일(base 골격은 완전한 secPr 보유) 통과 ─
+        code, rep = run("check", form)
+        check("check 정상 파일 통과", code == 0 and rep["ok"],
+              f"(errors: {rep and rep.get('errors')})")
+
+        # ─ check: secPr 망가뜨린 파일 탐지 (한컴 '손상 문서' 사고 재현) ─
+        broken = d / "broken.hwpx"
+        _break_secpr(form, broken)
+        code, rep = run("check", broken, expect=2)
+        check("check 깨진 secPr 탐지 (exit 2)", code == 2 and not rep["ok"])
+        check("check pagePr 누락 보고",
+              rep and any("pagePr" in e for e in rep["errors"]))
 
         # ─ 무매칭 → 원본 바이트 동일 ─
         nf = d / "nomatch.json"

@@ -485,6 +485,21 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" fill form.hwpx out.hwpx --cel
 # --values와 --cells는 동시 사용 가능 (라벨 매칭 후 좌표 채움 순서)
 ```
 
+### ★ 배포 전 필수: `check` — 한컴 열림 가능성 점검
+
+> **validate.py(XML 유효성)·verify(값 존재)를 통과해도 한컴이 '손상 문서'로
+> 거부하는 일이 있다.** 가장 흔한 원인은 secPr 불완전(용지/여백 자식 누락).
+> `check`는 이를 정적으로 잡는다 — 값 없이도 실행 가능, 모든 산출물에 적용.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" check output.hwpx   # exit 0=정상, 2=secPr 문제
+```
+
+errors에 `pagePr 없음`/`비표준 속성`이 뜨면 그 파일은 **LLM이 손수 만든 가짜
+secPr**을 가진 것이다. 정상 HWPX(워크플로우 H 변환본·한컴 저장본)의
+`<hp:secPr>...</hp:secPr>`을 통째로 이식하거나, 애초에 정상 파일을 베이스로
+fill/replace만 적용한다. fill의 `verify`에도 이 점검이 자동 포함된다.
+
 ### 워크플로우 J vs F vs B 선택 기준
 
 | 상황 | 도구 |

@@ -1310,6 +1310,61 @@ def add_rows_hwpx(src, dst, table_idx, rows_values, section_idx=0,
     return name
 
 
+# ─── 한컴 열림 가능성 사전 점검 (secPr 완전성) ─────────────────────
+
+# secPr 첫 섹션이 반드시 가져야 하는 자식 요소 (없으면 한컴이 '손상 문서'로 판정)
+SECPR_REQUIRED = ("pagePr", "margin")
+# 있는 게 정상인 권장 요소 (없어도 열릴 수 있으나 경고)
+SECPR_RECOMMENDED = ("grid", "startNum", "visibility", "lineNumberShape",
+                     "footNotePr")
+
+
+def check_openable(path):
+    """한컴이 문서를 열 수 있는지 정적 점검 — XML 유효성 너머의 구조 검사.
+
+    핵심: 첫 섹션의 secPr에 pagePr(용지 크기)/margin(여백)이 없으면
+    한컴은 문서를 그릴 수 없어 '손상된 문서' 복구 대화상자를 띄운다.
+    validate.py(XML 유효성)와 fill verify(값 존재)는 이를 못 잡는다.
+
+    Returns: {"ok": bool, "errors": [...], "warnings": [...]}
+    """
+    errors, warnings = [], []
+    with zipfile.ZipFile(path) as zf:
+        sections = section_names(zf)
+        if not sections:
+            return {"ok": False, "errors": ["섹션 파일 없음"], "warnings": []}
+        xml = zf.read(sections[0]).decode("utf-8")
+
+    root = scan_xml(xml)
+    secprs = list(descendants(root, "secPr"))
+    if not secprs:
+        return {"ok": False,
+                "errors": ["첫 섹션에 <hp:secPr>가 없음 — 한컴이 열지 못함"],
+                "warnings": []}
+    secpr = secprs[0]
+    children = {c.name for c in descendants(secpr, SECPR_REQUIRED + SECPR_RECOMMENDED)}
+
+    for req in SECPR_REQUIRED:
+        if req not in children:
+            errors.append(
+                f"secPr에 <hp:{req}> 없음 — "
+                f"{'용지 크기' if req == 'pagePr' else '여백'} 미정의로 한컴 열기 실패")
+    for rec in SECPR_RECOMMENDED:
+        if rec not in children:
+            warnings.append(f"secPr에 <hp:{rec}> 없음 (권장 요소)")
+
+    # 가짜 secPr 휴리스틱: secPr 태그에 pageWidth/leftMargin 등 비표준 속성
+    open_tag = xml[secpr.start:secpr.open_end]
+    bogus = [a for a in ("pageWidth", "pageHeight", "leftMargin",
+                         "rightMargin", "topMargin") if a in open_tag]
+    if bogus:
+        errors.append(
+            f"secPr에 비표준 속성 {bogus} — LLM이 손수 작성한 가짜 secPr로 보임. "
+            "정상 HWPX의 secPr(pagePr/margin 자식 요소)로 교체 필요")
+
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
 # ─── verify ────────────────────────────────────────────────────────
 
 def extract_all_text(path):
@@ -1334,6 +1389,12 @@ def verify_hwpx(path, values, original=None):
         full_text = extract_all_text(path)
     except Exception as e:  # noqa: BLE001
         return {"file": path, "ok": False, "error": f"파일 열기 실패: {e}"}
+
+    # 1.5) 한컴 열림 가능성 (secPr 완전성) — '손상 문서' 사고 방지
+    openable = check_openable(path)
+    report["openable"] = openable
+    if not openable["ok"]:
+        report["ok"] = False
 
     # 2) 값 존재 확인
     for key, value in values.items():
@@ -1441,6 +1502,10 @@ def main():
     p_ver.add_argument("--values", required=True)
     p_ver.add_argument("--original", help="원본 파일 — 비변경 엔트리 바이트 비교")
 
+    p_chk = sub.add_parser("check",
+                           help="한컴 열림 가능성 점검 (secPr 완전성, 값 불필요)")
+    p_chk.add_argument("input")
+
     args = parser.parse_args()
 
     def load_values(spec):
@@ -1532,6 +1597,12 @@ def main():
             report = verify_hwpx(args.input, values, args.original)
             _print(report)
             return 0 if report.get("ok") else 2
+
+        if args.command == "check":
+            report = check_openable(args.input)
+            report["file"] = args.input
+            _print(report)
+            return 0 if report["ok"] else 2
     except Exception as e:  # noqa: BLE001
         print(f"오류: {e}", file=sys.stderr)
         return 1
