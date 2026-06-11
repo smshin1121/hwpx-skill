@@ -1319,50 +1319,106 @@ SECPR_RECOMMENDED = ("grid", "startNum", "visibility", "lineNumberShape",
                      "footNotePr")
 
 
-def check_openable(path):
-    """한컴이 문서를 열 수 있는지 정적 점검 — XML 유효성 너머의 구조 검사.
+def _norm_compact(s):
+    return re.sub(r"\s", "", s)
 
-    핵심: 첫 섹션의 secPr에 pagePr(용지 크기)/margin(여백)이 없으면
-    한컴은 문서를 그릴 수 없어 '손상된 문서' 복구 대화상자를 띄운다.
-    validate.py(XML 유효성)와 fill verify(값 존재)는 이를 못 잡는다.
 
-    Returns: {"ok": bool, "errors": [...], "warnings": [...]}
+def detect_raw_llm(path):
+    """한컴을 한 번도 거치지 않은 raw LLM 출력인지 탐지.
+
+    한컴은 저장 시 본문을 기반으로 미리보기(Preview/PrvText.txt)와
+    줄배치 캐시(hp:linesegarray)를 항상 생성한다. LLM이 section XML을
+    손수 만들어 ZIP으로 묶기만 하면 이 둘이 비어 있고, 한컴이 본문
+    레이아웃을 그리지 못해 '빈 페이지'로 열린다(이번 자문수락서 사고).
+
+    Returns: {"raw_suspect": bool, "signals": {...}}
+    """
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+        body, lsa = "", 0
+        for n in section_names(zf):
+            x = zf.read(n).decode("utf-8", "replace")
+            root = scan_xml(x)
+            for t in descendants(root, "t"):
+                body += decode_entities(
+                    _INNER_TAG_RE.sub("", x[t.content_start:t.content_end]))
+            lsa += sum(1 for _ in descendants(root, "linesegarray"))
+        prv = (zf.read("Preview/PrvText.txt").decode("utf-8", "replace")
+               if "Preview/PrvText.txt" in names else "")
+
+    body_c = _norm_compact(body)
+    sample = body_c[:15]
+    preview_reflects = bool(sample) and sample in _norm_compact(prv)
+    # 본문이 충분히 있는데(>80자) 미리보기 미반영 + 줄배치 전무 → raw 확정 신호
+    raw = len(body_c) > 80 and not preview_reflects and lsa == 0
+    return {
+        "raw_suspect": raw,
+        "signals": {
+            "body_chars": len(body_c),
+            "preview_chars": len(_norm_compact(prv)),
+            "linesegarray": lsa,
+            "preview_reflects_body": preview_reflects,
+        },
+    }
+
+
+def check_openable(path, strict=False):
+    """한컴이 문서를 정상으로 열 수 있는지 정적 점검 — XML 유효성 너머.
+
+    두 종류의 사고를 잡는다:
+    1) secPr 불완전(pagePr/margin 누락) → '손상된 문서' 복구 대화상자
+    2) raw LLM 출력(미리보기/줄배치 부재) → '빈 페이지'로 열림
+
+    validate.py(XML 유효성)·fill verify(값 존재)는 둘 다 못 잡는다.
+
+    strict=True면 raw 의심도 ok=False로 처리(배포 게이트/훅용).
+
+    Returns: {"ok", "errors", "warnings", "raw_llm_suspect", "raw_signals"}
     """
     errors, warnings = [], []
     with zipfile.ZipFile(path) as zf:
         sections = section_names(zf)
         if not sections:
-            return {"ok": False, "errors": ["섹션 파일 없음"], "warnings": []}
+            return {"ok": False, "errors": ["섹션 파일 없음"], "warnings": [],
+                    "raw_llm_suspect": False, "raw_signals": {}}
         xml = zf.read(sections[0]).decode("utf-8")
 
     root = scan_xml(xml)
     secprs = list(descendants(root, "secPr"))
     if not secprs:
-        return {"ok": False,
-                "errors": ["첫 섹션에 <hp:secPr>가 없음 — 한컴이 열지 못함"],
-                "warnings": []}
-    secpr = secprs[0]
-    children = {c.name for c in descendants(secpr, SECPR_REQUIRED + SECPR_RECOMMENDED)}
-
-    for req in SECPR_REQUIRED:
-        if req not in children:
+        errors.append("첫 섹션에 <hp:secPr>가 없음 — 한컴이 열지 못함")
+        secpr = None
+    else:
+        secpr = secprs[0]
+        children = {c.name for c in descendants(secpr, SECPR_REQUIRED + SECPR_RECOMMENDED)}
+        for req in SECPR_REQUIRED:
+            if req not in children:
+                errors.append(
+                    f"secPr에 <hp:{req}> 없음 — "
+                    f"{'용지 크기' if req == 'pagePr' else '여백'} 미정의로 한컴 열기 실패")
+        for rec in SECPR_RECOMMENDED:
+            if rec not in children:
+                warnings.append(f"secPr에 <hp:{rec}> 없음 (권장 요소)")
+        # 가짜 secPr 휴리스틱: secPr 태그에 pageWidth/leftMargin 등 비표준 속성
+        open_tag = xml[secpr.start:secpr.open_end]
+        bogus = [a for a in ("pageWidth", "pageHeight", "leftMargin",
+                             "rightMargin", "topMargin") if a in open_tag]
+        if bogus:
             errors.append(
-                f"secPr에 <hp:{req}> 없음 — "
-                f"{'용지 크기' if req == 'pagePr' else '여백'} 미정의로 한컴 열기 실패")
-    for rec in SECPR_RECOMMENDED:
-        if rec not in children:
-            warnings.append(f"secPr에 <hp:{rec}> 없음 (권장 요소)")
+                f"secPr에 비표준 속성 {bogus} — LLM이 손수 작성한 가짜 secPr로 보임. "
+                "정상 HWPX의 secPr(pagePr/margin 자식 요소)로 교체 필요")
 
-    # 가짜 secPr 휴리스틱: secPr 태그에 pageWidth/leftMargin 등 비표준 속성
-    open_tag = xml[secpr.start:secpr.open_end]
-    bogus = [a for a in ("pageWidth", "pageHeight", "leftMargin",
-                         "rightMargin", "topMargin") if a in open_tag]
-    if bogus:
-        errors.append(
-            f"secPr에 비표준 속성 {bogus} — LLM이 손수 작성한 가짜 secPr로 보임. "
-            "정상 HWPX의 secPr(pagePr/margin 자식 요소)로 교체 필요")
+    # raw LLM 파일(한컴 미경유) 탐지 — '빈 페이지' 사고
+    raw = detect_raw_llm(path)
+    if raw["raw_suspect"]:
+        warnings.append(
+            "한컴 미경유 raw 파일 의심 (미리보기·줄배치 부재) — 한컴에서 빈 "
+            "페이지로 열릴 수 있음. 정상 HWPX(한컴 저장본/워크플로우 H 변환본)를 "
+            "베이스로 fill/replace만 적용하거나, 한컴에서 한 번 열어 저장하세요")
 
-    return {"ok": not errors, "errors": errors, "warnings": warnings}
+    ok = not errors and (not strict or not raw["raw_suspect"])
+    return {"ok": ok, "errors": errors, "warnings": warnings,
+            "raw_llm_suspect": raw["raw_suspect"], "raw_signals": raw["signals"]}
 
 
 # ─── verify ────────────────────────────────────────────────────────
@@ -1503,8 +1559,10 @@ def main():
     p_ver.add_argument("--original", help="원본 파일 — 비변경 엔트리 바이트 비교")
 
     p_chk = sub.add_parser("check",
-                           help="한컴 열림 가능성 점검 (secPr 완전성, 값 불필요)")
+                           help="한컴 열림 가능성 점검 (secPr + raw 파일, 값 불필요)")
     p_chk.add_argument("input")
+    p_chk.add_argument("--strict", action="store_true",
+                       help="raw LLM 파일(빈 페이지 위험)도 실패(exit 2)로 처리")
 
     args = parser.parse_args()
 
@@ -1599,7 +1657,7 @@ def main():
             return 0 if report.get("ok") else 2
 
         if args.command == "check":
-            report = check_openable(args.input)
+            report = check_openable(args.input, strict=args.strict)
             report["file"] = args.input
             _print(report)
             return 0 if report["ok"] else 2
