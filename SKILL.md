@@ -22,6 +22,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── finalize_hwpx.py       # line cache removal, layout QA, Hancom open test
 │   ├── analyze_template.py    # HWPX 심층 분석
 │   ├── clone_form.py           # ★ 양식 복제 (Workflow F)
+│   ├── fill_hwpx.py            # ★★ 양식 필드 채우기 (Workflow J) — 원본 보존 최강
 │   ├── verify_hwpx.py         # ★ 서브에이전트 검수 도구
 │   ├── text_extract.py        # 텍스트 추출
 │   ├── build_problem_answer_sheet.py  # 문제지 1장 + 답안지 1장 생성
@@ -100,7 +101,8 @@ Rules:
 사용자 요청
  ├─ ".hwp 파일 → .hwpx 변환" → 워크플로우 H (HWP→HWPX 변환) ★★
  ├─ "마크다운/텍스트/URL → HWPX" → 워크플로우 A (콘텐츠→HWPX)
- ├─ "양식에 내용 채워줘" → 워크플로우 B (템플릿 치환)
+ ├─ "양식의 빈칸/필드 채워줘" (라벨-값, 체크박스, 괄호 빈칸) → 워크플로우 J (필드 채우기) ★★★
+ ├─ "양식에 내용 채워줘" ({{플레이스홀더}} 템플릿) → 워크플로우 B (템플릿 치환)
  ├─ "HWPX 수정해줘" → 워크플로우 C (기존 문서 편집)
  ├─ "이 HWPX 양식으로 만들어줘" → 워크플로우 D (레퍼런스 기반)
  ├─ "이 양식 복제해서 내용 바꿔줘" → 워크플로우 F (양식 복제) ★
@@ -117,6 +119,7 @@ Rules:
 입력 파일 확인
  ├─ .hwp 파일 → 워크플로우 H로 HWPX 변환
  │   ├─ "변환만 해줘" → 변환 후 종료
+ │   ├─ "빈칸/필드 채워줘" → 변환 후 워크플로우 J
  │   ├─ "내용 바꿔줘" → 변환 후 워크플로우 F
  │   ├─ "읽어줘/텍스트 추출" → 변환 후 워크플로우 E
  │   └─ "수정해줘" → 변환 후 워크플로우 C
@@ -130,9 +133,10 @@ Rules:
 
 ```
 양식 분석 결과
- ├─ 테이블 ≥ 1개 또는 이미지 ≥ 1개 → 워크플로우 F (양식 복제) ★★★
+ ├─ 빈 값 셀/체크박스/괄호 빈칸이 있는 신청서·서식 → 워크플로우 J (필드 채우기) ★★★
+ ├─ 테이블 ≥ 1개 또는 이미지 ≥ 1개, 기존 문구를 새 문구로 교체 → 워크플로우 F (양식 복제) ★★★
  ├─ 테이블 0개, 이미지 0개, 단순 텍스트 → 워크플로우 C 또는 D 가능
- └─ 판단 불가 → 워크플로우 F를 기본으로 사용 (가장 안전)
+ └─ 판단 불가 → `fill_hwpx.py analyze` 먼저 실행 — 타겟이 있으면 J, 없으면 F
 ```
 
 > **절대 하지 말 것:**
@@ -383,6 +387,117 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/fix_namespaces.py" result.hwpx
 python3 "${CLAUDE_SKILL_DIR}/scripts/text_extract.py" doc.hwpx
 python3 "${CLAUDE_SKILL_DIR}/scripts/text_extract.py" doc.hwpx --format markdown
 ```
+
+---
+
+## 워크플로우 J: 양식 필드 채우기 (★★ 원본 보존 최강 — 신청서/서식에 필수)
+
+> **원본 HWPX의 양식 필드만 채우고 나머지는 바이트 단위로 보존한다.**
+> LLM은 JSON만 작성한다 — XML을 손으로 쓰는 단계가 없으므로 어떤 LLM에서도 같은 결과가 나온다.
+>
+> - XML은 DOM 재직렬화 없이 `<hp:t>` 텍스트만 문자열 splice로 교체 → **fix_namespaces.py 불필요**
+> - ZIP은 변경된 section XML 엔트리만 재작성 → 이미지·header.xml·mimetype 등 **나머지 엔트리는 바이트 동일**
+> - 값 셀의 첫 `<hp:run>`의 charPrIDRef를 유지 → **글꼴/크기/굵기 보존**
+> - 수정된 문단의 `hp:linesegarray`(줄배치 캐시)를 **외과적으로 자동 제거** → stale 캐시로
+>   인한 한컴 '손상 파일' 경고 방지. 무수정 문단의 캐시는 보존되므로
+>   `finalize_hwpx.py --strip-linesegarray`(전체 제거)를 추가로 돌릴 필요 없음.
+>   레이아웃 경고 검사가 필요하면 `finalize_hwpx.py --layout`만 사용.
+
+### 채우기 전략 (자동 적용)
+
+| 전략 | 패턴 | 예 |
+|------|------|-----|
+| 인셀 패턴 | 체크박스/괄호 빈칸/어노테이션 | `□동의`→`☑동의`, `일반(  )통`→`일반(3)통`, `(한자：  )`→`(한자：洪吉童)` |
+| 라벨-값 셀 | 라벨 셀의 오른쪽 셀 교체 | `성명 │ (빈칸)` → `성명 │ 홍길동` |
+| 헤더 행 | 첫 행이 전부 라벨인 표 | `품명│수량` 헤더 아래 데이터 행 채움 |
+| 인라인 | 표 밖 문단의 "라벨: 값" | `작성자: 미정` → `작성자: 김철수` |
+
+라벨 매칭은 정규화(공백/콜론/괄호 제거) + 접두사 퍼지 매칭(60% 이상 겹침)이므로
+`"성  명："`도 키 `"성명"`으로 매칭된다.
+
+### 전체 흐름 (3단계 파이프라인)
+
+```bash
+# [1] 분석 — 채울 수 있는 타겟을 JSON으로 출력 (key를 그대로 values의 키로 사용)
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" analyze form.hwpx
+
+# [2] values.json 작성 — analyze가 출력한 key에 값만 매핑
+#     {"성명": "홍길동", "연락처": "010-1234-5678", "동의": "☑"}
+
+# [3] 채우기 + 검증
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" fill form.hwpx output.hwpx --values values.json
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" verify output.hwpx --values values.json --original form.hwpx
+```
+
+- `fill`의 출력 JSON에서 `unmatched`가 비어 있어야 한다. 남아 있으면 `analyze`의 key와
+  values의 키가 일치하는지 확인하고 다시 실행한다.
+- `verify --original`은 ① 모든 값이 실제로 문서에 들어갔는지 ② 섹션 XML 외 엔트리가
+  바이트 동일한지 검사한다. `"ok": true`가 아니면 결과물을 사용자에게 주지 않는다.
+- 종료 코드: 0=성공, 2=채워진 항목 없음/검증 실패 → 워크플로우 F로 폴백.
+
+### 내용 수정: `replace` — 문구 교체 (run 경계 무관)
+
+한컴은 한 문장을 여러 `<hp:run>`/`<hp:t>`로 쪼개 저장하는 경우가 많아
+clone_form.py의 단순 문자열 치환이 놓칠 수 있다. `replace`는 문단 단위로
+텍스트를 이어붙여 찾으므로 쪼개진 문구도 잡고, 각 run의 charPrIDRef는 유지된다.
+
+```bash
+# map.json: {"옛 문구": "새 문구", ...}
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" replace doc.hwpx out.hwpx --map map.json
+```
+
+출력의 `replaced`에 문구별 교체 횟수, `not_found`에 못 찾은 문구가 보고된다.
+`not_found`가 있으면 `analyze` 또는 text_extract.py로 원본 문구를 다시 확인한다.
+
+### 내용 추가: `add-row` — 표 행 추가 (스타일 100% 보존)
+
+기존 행의 XML을 통째로 복제해 표 끝에 붙이므로 셀 너비·테두리·글꼴이 그대로다.
+cellAddr rowAddr, 표 rowCnt, 문단 id가 자동 갱신된다.
+
+```bash
+# rows.json: [["모니터","5"], ["키보드","10"]]  — 행당 셀 수와 일치해야 함
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" add-row doc.hwpx out.hwpx \
+  --table 1 --rows rows.json          # --table은 analyze의 table 번호
+```
+
+> rowSpan 병합이 있는 표는 좌표가 깨질 수 있어 **자동 거부**된다(exit 1).
+> 이 경우 행 추가 대신 사용자에게 양식 구조 한계를 알린다.
+
+### 내용 추가: `add-para` — 본문 문단 추가
+
+기준 문구가 있는 문단을 복제해 그 뒤에 삽입한다. paraPr/charPr를 물려받아
+스타일이 유지된다. 기준 문단에 secPr/표/개체가 있으면 거부된다(exit 1) —
+일반 텍스트 문단을 기준으로 다시 지정한다.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" add-para doc.hwpx out.hwpx \
+  --after "기준 문구" --text "추가할 문단"
+# 여러 개: --paras paras.json  ([{"after": "...", "text": "..."}])
+```
+
+### 좌표 지정 폴백: `fill --cells`
+
+라벨 휴리스틱이 안 통하는 복잡한 표는 `analyze`가 보고한 좌표로 직접 채운다.
+
+```bash
+# cells.json: [{"table":0,"row":2,"col":1,"value":"텍스트"}]
+python3 "${CLAUDE_SKILL_DIR}/scripts/fill_hwpx.py" fill form.hwpx out.hwpx --cells cells.json
+# --values와 --cells는 동시 사용 가능 (라벨 매칭 후 좌표 채움 순서)
+```
+
+### 워크플로우 J vs F vs B 선택 기준
+
+| 상황 | 도구 |
+|------|-----|
+| 빈 양식(신청서·서식)의 필드 채우기 — 라벨/체크박스/빈칸 | **J `fill`** |
+| 작성된 문서의 기존 문구를 새 문구로 교체 | **J `replace`** (run 분할 대응) → 실패 시 F |
+| 표에 데이터 행 추가 | **J `add-row`** |
+| 라벨 매칭 실패한 복잡한 표 | **J `fill --cells`** (좌표 지정) |
+| XML 전역 일괄 치환 (메타데이터 포함) | F (clone_form.py) |
+| `{{이름}}` 같은 플레이스홀더가 박힌 전용 템플릿 | B |
+
+> J가 타겟을 못 찾으면(`analyze`의 target_count가 0) `replace`(문구 교체)나
+> F로 전환한다. **.hwp 입력은 워크플로우 H로 HWPX 변환 후 J를 적용한다.**
 
 ---
 
