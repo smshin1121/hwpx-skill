@@ -76,13 +76,27 @@ def main():
         check("체크박스", "☑동의 □비동의" in xml)
         check("괄호 빈칸", "일반(3)통" in xml)
 
-        # ─ replace (run 경계를 넘는 문구) ─
+        # linesegarray 외과 제거: 수정된 문단(연락처 값)은 제거,
+        # 무수정 문단(동의여부 라벨/제목/base 기본 문단)은 보존
+        lsa0 = len(re.findall(
+            r"<hp:linesegarray",
+            zipfile.ZipFile(form).read("Contents/section0.xml").decode()))
+        lsa = len(re.findall(r"<hp:linesegarray", xml))
+        check("fill 후 수정 문단 linesegarray만 제거", lsa == lsa0 - 1,
+              f"(got {lsa0}→{lsa})")
+
+        # ─ replace (run 경계를 넘는 문구 + 제목 문단 캐시 제거) ─
         mf = d / "map.json"
-        mf.write_text(json.dumps({"2025년 기준으로": "2026년 6월 기준으로"},
+        mf.write_text(json.dumps({"2025년 기준으로": "2026년 6월 기준으로",
+                                  "입사 지원 신청서": "경력직 채용 신청서"},
                                  ensure_ascii=False), encoding="utf-8")
         out2 = d / "out2.hwpx"
         code, rep = run("replace", out1, out2, "--map", mf)
-        check("replace 성공 (run 경계)", code == 0 and rep["total"] == 1)
+        check("replace 성공 (run 경계)", code == 0 and rep["total"] == 2)
+        xml = zipfile.ZipFile(out2).read("Contents/section0.xml").decode()
+        lsa2 = len(re.findall(r"<hp:linesegarray", xml))
+        check("replace 후 제목 문단 캐시 제거", lsa2 == lsa - 1,
+              f"(got {lsa}→{lsa2})")
 
         # ─ add-row ─
         rf = d / "rows.json"

@@ -398,6 +398,10 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/text_extract.py" doc.hwpx --format markdown
 > - XML은 DOM 재직렬화 없이 `<hp:t>` 텍스트만 문자열 splice로 교체 → **fix_namespaces.py 불필요**
 > - ZIP은 변경된 section XML 엔트리만 재작성 → 이미지·header.xml·mimetype 등 **나머지 엔트리는 바이트 동일**
 > - 값 셀의 첫 `<hp:run>`의 charPrIDRef를 유지 → **글꼴/크기/굵기 보존**
+> - 수정된 문단의 `hp:linesegarray`(줄배치 캐시)를 **외과적으로 자동 제거** → stale 캐시로
+>   인한 한컴 '손상 파일' 경고 방지. 무수정 문단의 캐시는 보존되므로
+>   `finalize_hwpx.py --strip-linesegarray`(전체 제거)를 추가로 돌릴 필요 없음.
+>   레이아웃 경고 검사가 필요하면 `finalize_hwpx.py --layout`만 사용.
 
 ### 채우기 전략 (자동 적용)
 

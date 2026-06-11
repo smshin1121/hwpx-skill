@@ -15,23 +15,29 @@ TC = ('<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" dirty="0
 def cell(row, col, paras):
     return TC.format(paras=paras, row=row, col=col)
 
-def p(run_xml, pid):
-    return f'<hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">{run_xml}</hp:p>'
+# 한컴 줄배치 캐시 — 텍스트 수정 시 stale해지므로 fill_hwpx가 제거해야 함
+LSA = ('<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000"'
+       ' textheight="1000" baseline="850" spacing="600" horzpos="0"'
+       ' horzsize="42520" flags="393216"/></hp:linesegarray>')
+
+def p(run_xml, pid, lsa=False):
+    body = run_xml + (LSA if lsa else "")
+    return f'<hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">{body}</hp:p>'
 
 def t_run(text, charpr="0"):
     return f'<hp:run charPrIDRef="{charpr}"><hp:t>{text}</hp:t></hp:run>'
 
 FORM = (
-    p(t_run("입사 지원 신청서"), 9001)
+    p(t_run("입사 지원 신청서"), 9001, lsa=True)  # replace로 수정됨 → 캐시 제거 기대
     # 표 1: 라벨-값 (빈 self-closing run / 기존 값 / 어노테이션 / 체크박스 / 괄호 빈칸)
     + p('<hp:run charPrIDRef="0"><hp:tbl id="9100" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" repeatHeader="1" rowCnt="5" colCnt="2" cellSpacing="0" borderFillIDRef="3" noAdjust="0">'
         + "<hp:tr>" + cell(0, 0, p(t_run("성  명", "1"), 9101))
         + cell(0, 1, p('<hp:run charPrIDRef="2"/>', 9102)) + "</hp:tr>"
         + "<hp:tr>" + cell(1, 0, p(t_run("연락처"), 9103))
-        + cell(1, 1, p(t_run("010-0000-0000"), 9104)) + "</hp:tr>"
+        + cell(1, 1, p(t_run("010-0000-0000"), 9104, lsa=True)) + "</hp:tr>"  # fill로 수정 → 제거 기대
         + "<hp:tr>" + cell(2, 0, p(t_run("주  소"), 9105))
         + cell(2, 1, p(t_run("(한자：      )"), 9106)) + "</hp:tr>"
-        + "<hp:tr>" + cell(3, 0, p(t_run("동의여부"), 9107))
+        + "<hp:tr>" + cell(3, 0, p(t_run("동의여부"), 9107, lsa=True))  # 라벨 셀 = 무수정 → 캐시 보존 기대
         + cell(3, 1, p(t_run("□동의 □비동의"), 9108)) + "</hp:tr>"
         + "<hp:tr>" + cell(4, 0, p(t_run("통수"), 9109))
         + cell(4, 1, p(t_run("일반(  )통"), 9110)) + "</hp:tr>"

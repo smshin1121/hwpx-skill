@@ -632,8 +632,23 @@ def fill_section(xml, values, matched_labels, filled, section_index):
     return apply_splices(xml, splices)
 
 
+def _nearest(el, name):
+    """가장 가까운 특정 태그 조상."""
+    p = el.parent
+    while p is not None:
+        if p.name == name:
+            return p
+        p = p.parent
+    return None
+
+
 def build_splices(xml, reg):
-    """레지스트리의 변경분(텍스트 교체 + 빈 run 삽입)을 splice 목록으로 변환."""
+    """레지스트리의 변경분(텍스트 교체 + 빈 run 삽입)을 splice 목록으로 변환.
+
+    텍스트가 바뀐 문단의 <hp:linesegarray>(한컴 줄배치 캐시)도 함께 제거한다.
+    stale 캐시는 한컴이 '손상된 파일' 경고를 띄우는 원인 (PR #1 참조).
+    수정된 문단의 캐시만 제거하므로 나머지 문단의 레이아웃 정보는 보존된다.
+    """
     splices = []  # (start, end, replacement)
     for tn in reg.changed():
         el = tn.el
@@ -659,6 +674,22 @@ def build_splices(xml, reg):
                             f"{opening}{t_xml}</{run.qname}>"))
         else:
             splices.append((run.content_end, run.content_end, t_xml))
+
+    # 수정된 문단의 linesegarray 캐시 제거 (stale 캐시 → 한컴 손상 경고 방지)
+    affected = {}
+    for tn in reg.changed():
+        p_el = _nearest(tn.el, "p")
+        if p_el is not None:
+            affected[id(p_el)] = p_el
+    for run, _ in reg.run_insertions:
+        p_el = _nearest(run, "p")
+        if p_el is not None:
+            affected[id(p_el)] = p_el
+    for p_el in affected.values():
+        for lsa in descendants(p_el, "linesegarray"):
+            if ancestor_within(lsa, ("p",), p_el):
+                continue  # 중첩 표 내부 등 하위 문단 소속은 건드리지 않음
+            splices.append((lsa.start, lsa.end, ""))
     return splices
 
 
@@ -810,6 +841,14 @@ def add_table_rows(xml, table_idx, rows_values, template_row_idx=-1):
     return apply_splices(xml, splices)
 
 
+def _strip_all_linesegarray(scope_el, splices):
+    """복제 조각의 linesegarray 전체 제거 — 복제된 캐시는 항상 stale."""
+    covered = {(s, e) for s, e, r in splices if r == ""}
+    for lsa in descendants(scope_el, "linesegarray"):
+        if (lsa.start, lsa.end) not in covered:
+            splices.append((lsa.start, lsa.end, ""))
+
+
 def _clone_row(frag, vals, new_row_addr, next_pid):
     """행 조각 XML 복제 — 셀 값 교체 + rowAddr/문단 id 갱신."""
     root = scan_xml(frag)
@@ -819,6 +858,7 @@ def _clone_row(frag, vals, new_row_addr, next_pid):
         if val is not None:
             replace_cell_text(tc, str(val), reg)
     splices = build_splices(frag, reg)
+    _strip_all_linesegarray(tr, splices)
     for ca in descendants(tr, "cellAddr"):
         m = re.search(r'\browAddr="\d+"', frag[ca.start:ca.open_end])
         if m:
@@ -896,6 +936,7 @@ def _clone_para(frag, text, next_pid):
             for tn in ts[1:]:
                 tn.text = ""
     splices = build_splices(frag, reg)
+    _strip_all_linesegarray(p_el, splices)
     m = re.search(r'\bid="\d+"', frag[p_el.start:p_el.open_end])
     if m:
         splices.append((p_el.start + m.start(), p_el.start + m.end(),
