@@ -208,6 +208,24 @@ def main():
         check("check pagePr 누락 보고",
               rep and any("pagePr" in e for e in rep["errors"]))
 
+        # ─ fix-borders: 글자 테두리(charPr borderFillIDRef) 제거, 표셀 보존 ─
+        # base 헤더의 charPr은 모두 borderFillIDRef를 가짐(변환기 버그와 동일 구조)
+        h_before = zipfile.ZipFile(form).read("Contents/header.xml").decode()
+        n_cp = len(re.findall(r"<hh:charPr\b[^>]*borderFillIDRef", h_before))
+        check("테두리 폼 준비됨", n_cp > 0, f"(charPr 테두리 {n_cp})")
+        fixed = d / "fixed.hwpx"
+        code, rep = run("fix-borders", form, fixed)
+        check("fix-borders 글자 테두리 제거", code == 0 and rep["char_borders_removed"] == n_cp)
+        hh = zipfile.ZipFile(fixed).read("Contents/header.xml").decode()
+        ss = zipfile.ZipFile(fixed).read("Contents/section0.xml").decode()
+        check("fix-borders charPr 테두리 0",
+              len(re.findall(r"<hh:charPr\b[^>]*borderFillIDRef", hh)) == 0)
+        check("fix-borders 표셀 테두리 보존",
+              "<hp:tc" in ss and "borderFillIDRef" in ss)
+        code, rep = run("fix-borders", fixed)
+        check("fix-borders 재실행 안전(idempotent)",
+              rep["char_borders_removed"] == 0)
+
         # ─ 무매칭 → 원본 바이트 동일 ─
         nf = d / "nomatch.json"
         nf.write_text('{"존재하지않는라벨":"값"}', encoding="utf-8")
