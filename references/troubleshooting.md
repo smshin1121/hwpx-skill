@@ -42,3 +42,28 @@
 |------|------|
 | HwpxDocument.open() 실패 | XML-first 접근 또는 ZIP-level 치환 사용 |
 | ObjectFinder 에러 | `pip install python-hwpx --break-system-packages` |
+
+## Hancom says the file is damaged after text replacement
+
+| Cause | Fix |
+|------|-----|
+| Stale `hp:linesegarray` layout caches remain after editing text outside Hancom | Run `python3 scripts/finalize_hwpx.py output.hwpx --strip-linesegarray` before validation |
+| XML validation passed but Hancom still refuses the file | Run `python3 scripts/validate.py output.hwpx --hancom` on Windows with Hancom Office installed |
+| Template was filled by rewriting XML nodes and losing run/control structure | Recreate from the original template with `clone_form.py` or ZIP-level string replacement, then finalize |
+
+## Text is squeezed or overlaps in table cells
+
+| Cause | Fix |
+|------|-----|
+| Long content is stored as one paragraph in a fixed-height cell | Split it into real `hp:p` paragraphs or list items |
+| Row height was not updated after content expansion | Increase every `hp:cellSz/@height` in the row and update table `hp:sz/@height` |
+| Text was forced to fit by changing the template structure | Keep the template structure; write an editing note when content cannot fit without a format decision |
+
+Use:
+
+```bash
+python3 scripts/finalize_hwpx.py output.hwpx --layout
+```
+
+The layout check is warning-based. It identifies likely risks that still need
+template-aware review.
