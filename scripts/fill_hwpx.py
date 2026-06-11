@@ -1314,6 +1314,52 @@ def add_rows_hwpx(src, dst, table_idx, rows_values, section_idx=0,
 
 _CHARPR_OPEN_RE = re.compile(r"<(?:\w+:)?charPr\b[^>]*?>")
 _BORDERREF_RE = re.compile(r'\s*borderFillIDRef="\d+"')
+_CHARPR_REF_RE = re.compile(
+    r"<(?:\w+:)?charPr\b[^>]*?borderFillIDRef=\"(\d+)\"")
+_BORDER_SOLID_RE = re.compile(
+    r"(?:left|right|top|bottom)Border type=\"(?:SOLID|DASH|DOT|THICK"
+    r"|DOUBLE|WAVE)\"")
+
+
+def _borderfill_is_solid(header_xml, bid):
+    """header.xml에서 borderFill id=bid가 실제 테두리선을 가지는지."""
+    m = re.search(rf'<(?:\w+:)?borderFill\b[^>]*\bid="{bid}"', header_xml)
+    if not m:
+        return False
+    end = header_xml.find("</", m.start())
+    # 같은 borderFill 닫는 태그까지
+    close = re.search(r"</(?:\w+:)?borderFill>", header_xml[m.start():])
+    block = (header_xml[m.start():m.start() + close.end()]
+             if close else header_xml[m.start():m.start() + 600])
+    return bool(_BORDER_SOLID_RE.search(block))
+
+
+def detect_char_border_bug(path):
+    """글자모양에 테두리가 박힌 변환기 버그인지 탐지.
+
+    hwp2hwpx는 글자모양(charPr) 대다수에 동일한 SOLID 테두리 borderFill을
+    참조시킨다(문서 전체 글자에 네모 테두리). 의도적 글자 테두리(일부 charPr만)
+    와 구분하기 위해, charPr의 절반 이상이 '실제 테두리선이 있는' borderFill을
+    참조할 때만 버그로 판정한다.
+
+    Returns: {"bug": bool, "bordered_charpr": int, "total_charpr": int}
+    """
+    with zipfile.ZipFile(path) as zf:
+        names = [n for n in zf.namelist() if n.endswith("header.xml")]
+        if not names:
+            return {"bug": False, "bordered_charpr": 0, "total_charpr": 0}
+        h = zf.read(names[0]).decode("utf-8")
+
+    total = len(re.findall(r"<(?:\w+:)?charPr\b", h))
+    solid_cache = {}
+    bordered = 0
+    for bid in _CHARPR_REF_RE.findall(h):
+        if bid not in solid_cache:
+            solid_cache[bid] = _borderfill_is_solid(h, bid)
+        if solid_cache[bid]:
+            bordered += 1
+    bug = total > 0 and bordered >= max(2, total * 0.5)
+    return {"bug": bug, "bordered_charpr": bordered, "total_charpr": total}
 
 
 def strip_char_borders(path, dst=None):
@@ -1455,9 +1501,19 @@ def check_openable(path, strict=False):
             "페이지로 열릴 수 있음. 정상 HWPX(한컴 저장본/워크플로우 H 변환본)를 "
             "베이스로 fill/replace만 적용하거나, 한컴에서 한 번 열어 저장하세요")
 
-    ok = not errors and (not strict or not raw["raw_suspect"])
+    # 글자 테두리 버그 탐지 — 모든 글자에 네모 테두리
+    cb = detect_char_border_bug(path)
+    if cb["bug"]:
+        warnings.append(
+            f"글자 테두리 버그 ({cb['bordered_charpr']}/{cb['total_charpr']} "
+            "charPr이 테두리 borderFill 참조) — 모든 글자에 네모 테두리가 보임. "
+            "`fill_hwpx.py fix-borders`로 제거하세요")
+
+    ok = (not errors
+          and (not strict or (not raw["raw_suspect"] and not cb["bug"])))
     return {"ok": ok, "errors": errors, "warnings": warnings,
-            "raw_llm_suspect": raw["raw_suspect"], "raw_signals": raw["signals"]}
+            "raw_llm_suspect": raw["raw_suspect"], "raw_signals": raw["signals"],
+            "char_border_bug": cb["bug"], "char_border_signals": cb}
 
 
 # ─── verify ────────────────────────────────────────────────────────

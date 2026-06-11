@@ -83,8 +83,22 @@ def main():
     if not target or not os.path.isfile(target):
         return 0
 
-    checker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "fill_hwpx.py")
+    skill_dir = os.path.dirname(os.path.abspath(__file__))
+    checker = os.path.join(skill_dir, "fill_hwpx.py")
+
+    # 글자 테두리 버그는 안전하게 자동 보정 (표 셀 테두리 보존, idempotent).
+    # convert_hwp.py를 안 거친 경로(기존 hwpx 베이스 편집)에서도 배포 직전에 잡힌다.
+    try:
+        sys.path.insert(0, skill_dir)
+        from fill_hwpx import detect_char_border_bug, strip_char_borders
+        if detect_char_border_bug(target)["bug"]:
+            removed = strip_char_borders(target)
+            if removed:
+                print(f"[hwpx-guard] 글자 테두리 {removed}개 자동 제거: "
+                      f"{os.path.basename(target)}", file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        pass  # 자동 보정 실패해도 아래 check로 진행
+
     try:
         proc = subprocess.run(
             [sys.executable, checker, "check", target, "--strict"],

@@ -63,6 +63,32 @@ def _make_raw(src, dst):
                 zo.writestr(item, data, compress_type=ct)
 
 
+def _make_solid_char_border(src, dst):
+    """base borderFill 2의 테두리를 NONE→SOLID로 바꿔 '글자테두리 버그' 재현."""
+    import io
+    buf = src.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(buf)) as zf:
+        h = zf.read("Contents/header.xml").decode("utf-8")
+
+    def fix(m):
+        b = m.group(1)
+        for side in ("left", "right", "top", "bottom"):
+            b = b.replace(f'{side}Border type="NONE"',
+                          f'{side}Border type="SOLID"')
+        return b
+    h2 = re.sub(r'(<hh:borderFill id="2"[^>]*>.*?</hh:borderFill>)', fix,
+                h, flags=re.DOTALL)
+    with zipfile.ZipFile(dst, "w") as zo:
+        with zipfile.ZipFile(io.BytesIO(buf)) as zf:
+            for item in zf.infolist():
+                data = (h2.encode("utf-8")
+                        if item.filename == "Contents/header.xml"
+                        else zf.read(item.filename))
+                ct = (zipfile.ZIP_STORED if item.filename == "mimetype"
+                      else zipfile.ZIP_DEFLATED)
+                zo.writestr(item, data, compress_type=ct)
+
+
 def _break_secpr(src, dst):
     """정상 HWPX의 secPr 자식 요소를 제거해 '한컴 손상 문서' 상태 재현."""
     import io
@@ -225,6 +251,21 @@ def main():
         code, rep = run("fix-borders", fixed)
         check("fix-borders 재실행 안전(idempotent)",
               rep["char_borders_removed"] == 0)
+
+        # ─ 글자 테두리 버그 탐지 + check --strict 차단 ─
+        # base borderFill 2(NONE)를 SOLID로 바꿔 '글자테두리 버그' 재현
+        bordered = d / "bordered.hwpx"
+        _make_solid_char_border(form, bordered)
+        code, rep = run("check", bordered)
+        check("글자테두리 버그 탐지", rep and rep.get("char_border_bug") is True,
+              f"(signals: {rep and rep.get('char_border_signals')})")
+        code, rep = run("check", bordered, "--strict", expect=2)
+        check("check --strict 글자테두리 차단", code == 2 and not rep["ok"])
+        # fix-borders 후 버그 해소
+        bfixed = d / "bfixed.hwpx"
+        run("fix-borders", bordered, bfixed)
+        code, rep = run("check", bfixed, "--strict")
+        check("fix-borders 후 strict 통과", code == 0 and rep["ok"])
 
         # ─ 무매칭 → 원본 바이트 동일 ─
         nf = d / "nomatch.json"
